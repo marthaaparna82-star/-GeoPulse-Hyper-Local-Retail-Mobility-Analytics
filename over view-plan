@@ -1,0 +1,162 @@
+# GeoPulse: Hyper-Local Retail Mobility Analytics
+
+**Domain:** Retail Strategy & Geospatial Analytics
+
+GeoPulse turns anonymized mobile GPS pings into dynamic footfall insights, so a retailer can see how people actually move through a city hour by hour before choosing a new store site. Its headline question: *will a new store steal traffic from one we already have?*
+
+---
+
+## 1. Problem Statement
+
+Retailers usually pick new store locations from static census data. That data says who lives in an area, not how people move through it during the day. The result is costly mistakes, such as opening a new store that **cannibalizes** the sales of an existing one.
+
+## 2. Use Case
+
+A real estate director at a coffee chain is evaluating **Store B on 5th Street**.
+
+1. GeoPulse ingests large volumes of anonymized GPS pings.
+2. The pings are overlaid on commercial zoning polygons and store catchments.
+3. A Kepler.gl dashboard shows an animated footfall heatmap.
+4. The director scrubs through the timeline and sees that Store B would intercept about **30% of the morning commuter traffic** currently walking to **Store A**.
+5. They pick a different neighborhood.
+
+---
+
+## 3. Tech Stack
+
+| Layer | Tool | Role in the project |
+|---|---|---|
+| Storage / lakehouse | **Snowflake** | Stores raw pings, polygons, and marts. Uses the native `GEOGRAPHY` type. |
+| Spatial processing | **Apache Sedona on PySpark** | Distributed spatial joins (for example, 10M pings against 5,000 store polygons) and trip building. |
+| Data modeling | **dbt** | Cleans the joined data and builds hourly footfall metrics, with tests and documentation. |
+| Visualization | **Kepler.gl + React** | Interactive 3D hexbins, animated trips, and movement arcs in a web app. |
+| Supporting | Python, H3 | Synthetic data generation, spatial indexing, and orchestration scripts. |
+
+---
+
+## 4. Architecture
+
+```mermaid
+flowchart LR
+    A[GPS pings<br/>real or synthetic] --> B[(Snowflake<br/>raw layer)]
+    P[Store + zoning<br/>polygons] --> B
+    B --> C[Apache Sedona / PySpark<br/>spatial joins + trips]
+    C --> D[(Snowflake<br/>staging)]
+    D --> E[dbt<br/>models + tests]
+    E --> F[(Footfall marts)]
+    F --> G[Export: GeoJSON / CSV]
+    G --> H[React + Kepler.gl<br/>dashboard]
+```
+
+---
+
+## 5. Process: What We Do, Step by Step
+
+### Step 1: Data acquisition
+- Real GPS pings are costly and restricted, so the project uses **synthetic pings** with known commuter patterns. Open data can supply the realistic parts: OpenStreetMap or Overture Maps for the street network, POIs, and zoning.
+- Each ping has: `device_id` (hashed), `timestamp`, `latitude`, `longitude`, and optional `accuracy`.
+- Store locations and commercial zone polygons are loaded as GeoJSON or WKT.
+
+### Step 2: Ingestion into Snowflake
+- Load raw pings into `RAW.PINGS`, with a `GEOGRAPHY` point column built from longitude and latitude.
+- Load stores and zones into `RAW.STORES` and `RAW.ZONES` as `GEOGRAPHY` polygons.
+- Keep raw tables untouched; all cleaning happens downstream.
+
+### Step 3: Spatial transformation with Sedona
+- Assign each ping an **H3 cell** (resolution 9 or 10) so the join is a cell lookup first and a precise point-in-polygon check second.
+- Run the distributed join: which pings fall inside which zones and store catchments.
+- **Sessionize** pings into trips: group by device, order by time, and start a new trip after a time gap (for example, 30 minutes). Derive origin, destination, dwell time, and the path.
+- Write results back to Snowflake staging tables.
+
+### Step 4: Modeling with dbt
+- `stg_pings`: dedupe, validate coordinates, drop bad accuracy.
+- `int_trips`: reconstructed trips with origin and destination.
+- `fct_footfall_hourly`: unique devices per zone, per hour, by day type.
+- `fct_catchment_overlap`: the cannibalization metric (see section 6).
+- dbt tests: valid lat/long ranges, no duplicate pings, non-negative counts, relationships between facts and dimensions.
+
+### Step 5: Cannibalization analysis
+See section 6.
+
+### Step 6: Dashboard
+- Pre-aggregate in Snowflake and export compact files; do not stream raw pings to the browser.
+- Kepler.gl layers: **Hexbin/H3** for density, **Trip** for animated movement, **Arc** for origin-to-store flows.
+- A timeline slider lets the user scrub through the day and compare candidate sites.
+
+---
+
+## 6. Cannibalization Method
+
+For an existing store A and a candidate site B:
+
+1. Select trips that enter Store A's catchment during the morning window (for example, 07:00 to 10:00).
+2. Count how many of those trips pass within a walking radius (for example, 150 m) of Site B.
+3. Report **exposure overlap** = trips passing B / total trips to A.
+4. Run a sensitivity check on radius and time window.
+
+> **Note:** Passing near a store is not the same as buying there. The overlap is a measure of *exposed traffic*, not lost sales, unless a conversion assumption is added.
+
+---
+
+## 7. Data Model (core tables)
+
+| Table | Grain | Key columns |
+|---|---|---|
+| `RAW.PINGS` | one GPS ping | device_id, ts, geog_point |
+| `RAW.STORES` | one store | store_id, name, geog_point, catchment_polygon |
+| `RAW.ZONES` | one zoning polygon | zone_id, zone_type, geog_polygon |
+| `INT_TRIPS` | one trip | trip_id, device_id, start_ts, end_ts, origin_zone, dest_zone |
+| `FCT_FOOTFALL_HOURLY` | zone x hour | zone_id, hour_ts, unique_devices |
+| `FCT_CATCHMENT_OVERLAP` | store pair x window | store_a, candidate_b, window, overlap_pct |
+
+---
+
+## 8. Privacy
+
+- Device IDs are hashed; no personal identifiers are stored.
+- Home-location precision is reduced.
+- Cells with fewer than about 10 unique devices are suppressed in outputs.
+
+---
+
+## 9. Repository Structure (planned)
+
+```
+geopulse/
+├── data/                 # sample data, polygons (small files only)
+├── generator/            # synthetic ping generator
+├── ingestion/            # Snowflake load scripts
+├── spark/                # Sedona jobs: spatial join, trip building
+├── dbt/                  # dbt project (models, tests, docs)
+├── export/               # scripts that produce dashboard files
+├── dashboard/            # React + Kepler.gl app
+└── README.md
+```
+
+---
+
+## 10. Getting Started (outline)
+
+1. Create a Snowflake account, warehouse, and database; set credentials in environment variables.
+2. Run the generator to produce synthetic pings and load stores and zones.
+3. Run the Sedona job to join pings and build trips.
+4. Run `dbt build` to create and test the marts.
+5. Run the export script, then start the dashboard with `npm install && npm start`.
+
+---
+
+## 11. Roadmap
+
+| Phase | Deliverable |
+|---|---|
+| 1 | Synthetic data generator, Snowflake schema, polygon loading |
+| 2 | Sedona spatial join and trip reconstruction |
+| 3 | dbt models, tests, and docs |
+| 4 | Cannibalization metric and sensitivity analysis |
+| 5 | Kepler.gl dashboard in React with timeline |
+
+## 12. Limitations
+
+- Synthetic data demonstrates the method but is not evidence about a real city.
+- GPS pings are a sample of the population, not a full count; results should be treated as relative, not absolute.
+- Exposure overlap is not a sales forecast.
