@@ -1,0 +1,29 @@
+# GeoPulse – Hyper-Local Retail Mobility Analytics
+
+## Week 2: Spatial Data Engineering
+
+### About the Project
+GeoPulse is a retail mobility analytics project that uses location-based data to analyze customer movement around retail stores. It helps understand store footfall and visitor patterns using geospatial analysis.
+
+### Week 2 Work
+- Created 500-meter store catchment areas.
+- Processed GPS ping data using PySpark and Apache Sedona.
+- Identified GPS points within store catchment areas.
+- Configured dbt with Snowflake.
+- Created hourly unique visitor aggregation for stores.
+
+### Tools & Technologies
+- Python
+- PySpark
+- Apache Sedona
+- Snowflake
+- dbt
+- SQL
+
+### Project Goal
+To analyze location-based visitor activity around retail stores and prepare hourly footfall data for retail analytics.
+
+### Status
+- Week 1: Completed
+- Week 2: In Progress
+
