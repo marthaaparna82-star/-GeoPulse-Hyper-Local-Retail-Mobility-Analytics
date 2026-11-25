@@ -1,0 +1,37 @@
+version: 2
+
+sources:
+  - name: raw
+    database: GEOPULSE_DB
+    schema: RAW
+    tables:
+      - name: store_catchment_pings
+        identifier: STORE_CATCHMENT_PINGS
+        description: Pings matched to a store's 500-meter catchment.
+
+models:
+  - name: stg_store_catchment_pings
+    description: Clean staging view for the spatial join output.
+    columns:
+      - name: store_id
+        tests:
+          - not_null
+      - name: device_id
+        tests:
+          - not_null
+      - name: ping_timestamp
+        tests:
+          - not_null
+
+  - name: hourly_store_visitors
+    description: Distinct devices per store and timestamp hour.
+    columns:
+      - name: store_id
+        tests:
+          - not_null
+      - name: visit_hour
+        tests:
+          - not_null
+      - name: unique_visitors
+        tests:
+          - not_null
